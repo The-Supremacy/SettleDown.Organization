@@ -1,0 +1,84 @@
+# Please refer https://aka.ms/HTTPSinContainer on how to setup an https developer certificate for your ASP.NET Core service.
+
+version: '3.4'
+
+services:
+  redis:
+    image: redis:6
+    ports:
+      - '6379:6379'
+
+  db:
+    container_name: cosmosdb
+    image: "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator"
+    tty: true
+    restart: 'on-failure'
+    mem_limit: 2G
+    cpu_count: 2
+    environment:
+      - AZURE_COSMOS_EMULATOR_PARTITION_COUNT=10
+      - AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true
+      - AZURE_COSMOS_EMULATOR_ALLOW_NETWORK_ACESS=true
+    ports:
+       - "8081:8081"
+       - "8900:8900"
+       - "8901:8901"
+       - "8979:8979"
+       - "10250:10250"
+       - "10251:10251"
+       - "10252:10252"
+       - "10253:10253"
+       - "10254:10254"
+       - "10255:10255"
+       - "10256:10256"
+       - "10350:10350"
+    volumes:
+       - ./vol_cosmos:/data/db
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    hostname: azurite
+    restart: 'on-failure'
+    command: 'azurite --blobHost 127.0.0.1 --blobPort 10000 --queueHost 127.0.0.1 --queuePort 10001 --location /workspace --debug /workspace/debug.log'
+    ports:
+        - '10000:10000'
+        - '10001:10001'
+    volumes:
+      - ./azurite:/workspace
+
+  settledown-organization-api:
+    image: settledown-organization-api
+    build:
+      context: .
+      dockerfile: SettleDown.Organization.Api/Dockerfile
+      args:
+        - configuration=Debug
+    ports:
+      - 9000:443
+      - 9001:80
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:443;http://+:80
+    depends_on:
+      - cosmosdb
+      - redis
+      - azurite
+    volumes:
+      - ~/.vsdbg:/remote_debugger:rw
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+
+  settledownorganizationapi-dapr:
+    image: 'daprio/daprd:1.11.3'
+    network_mode: 'service:settledown-organization-api'
+    depends_on:
+      - settledown-organization-api
+    command: ['./daprd',
+            '-app-id', 'settledown-organization-api',
+            '-app-port', '80',
+            '-components-path', 'components',
+            '-config', 'configuration/config.yaml'
+            ]
+    volumes:
+        - './dapr/components/:/components'
+        - './dapr/configuration/:/configuration'
